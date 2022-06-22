@@ -64,7 +64,7 @@ defmodule PlausibleWeb.StatsController do
       |> Enum.join()
 
     filename =
-      "Plausible export #{params["domain"]} #{Timex.format!(query.date_range.first, "{ISOdate} ")} to #{Timex.format!(query.date_range.last, "{ISOdate} ")}.zip"
+      "Putler export #{params["domain"]} #{Timex.format!(query.date_range.first, "{ISOdate} ")} to #{Timex.format!(query.date_range.last, "{ISOdate} ")}.zip"
 
     params = Map.merge(params, %{"limit" => "300", "csv" => "True", "detailed" => "True"})
     limited_params = Map.merge(params, %{"limit" => "100"})
