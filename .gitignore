@@ -58,3 +58,8 @@ plausible-report.xml
 # Dializer
 /priv/plts/*.plt
 /priv/plts/*.plt.hash
+
+.env
+
+# Geolocation databases
+/priv/geodb/*.mmdb

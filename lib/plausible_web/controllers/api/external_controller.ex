@@ -59,8 +59,8 @@ defmodule PlausibleWeb.Api.ExternalController do
     build_metadata = System.get_env("BUILD_METADATA", "{}") |> Jason.decode!()
 
     geo_database =
-      case Geolix.metadata([:geolocation]) do
-        %{geolocation: %{database_type: type}} ->
+      case Geolix.metadata(where: :geolocation) do
+        %{database_type: type} ->
           type
 
         _ ->
@@ -101,6 +101,12 @@ defmodule PlausibleWeb.Api.ExternalController do
 
   require OpenTelemetry.Tracer, as: Tracer
 
+  defp blocked_via_flag?(domain) do
+    blocked? = FunWithFlags.enabled?(:block_event_ingest, for: domain)
+    Tracer.set_attribute("blocked_by_flag", blocked?)
+    blocked?
+  end
+
   defp create_event(conn, params) do
     params = %{
       "name" => params["n"] || params["name"],
@@ -118,9 +124,9 @@ defmodule PlausibleWeb.Api.ExternalController do
       end
 
     blacklist_domain = params["domain"] in Application.get_env(:plausible, :domain_blacklist)
-    referrer_spam = is_spammer?(params["referrer"])
 
-    if is_bot?(ua) || blacklist_domain || referrer_spam do
+    if blacklist_domain || is_bot?(ua) || is_spammer?(params["referrer"]) ||
+         blocked_via_flag?(params["domain"]) do
       :ok
     else
       uri = params["url"] && URI.parse(params["url"])
@@ -471,17 +477,17 @@ defmodule PlausibleWeb.Api.ExternalController do
   defp visitor_location_details(conn) do
     result =
       PlausibleWeb.RemoteIp.get(conn)
-      |> Geolix.lookup()
+      |> Geolix.lookup(where: :geolocation)
 
     country_code =
-      get_in(result, [:geolocation, :country, :iso_code])
-      |> ignore_unknown_country
+      get_in(result, [:country, :iso_code])
+      |> ignore_unknown_country()
 
-    city_geoname_id = get_in(result, [:geolocation, :city, :geoname_id])
+    city_geoname_id = get_in(result, [:city, :geoname_id])
 
     subdivision1_code =
       case result do
-        %{geolocation: %{subdivisions: [%{iso_code: iso_code} | _rest]}} ->
+        %{subdivisions: [%{iso_code: iso_code} | _rest]} ->
           country_code <> "-" <> iso_code
 
         _ ->
@@ -490,7 +496,7 @@ defmodule PlausibleWeb.Api.ExternalController do
 
     subdivision2_code =
       case result do
-        %{geolocation: %{subdivisions: [_first, %{iso_code: iso_code} | _rest]}} ->
+        %{subdivisions: [_first, %{iso_code: iso_code} | _rest]} ->
           country_code <> "-" <> iso_code
 
         _ ->

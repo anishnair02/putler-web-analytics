@@ -1,5 +1,6 @@
 defmodule PlausibleWeb.Api.ExternalControllerTest do
   use PlausibleWeb.ConnCase
+  use Mimic
   use Plausible.ClickhouseRepo
 
   defp get_event(domain) do
@@ -263,6 +264,30 @@ defmodule PlausibleWeb.Api.ExternalControllerTest do
 
       assert response(conn, 202) == "ok"
       assert !get_event("ignore-spammers-test.com")
+    end
+
+    test "feature flag - blocks traffic from a domain when block_traffic is enabled", %{
+      conn: conn
+    } do
+      FunWithFlags
+      |> stub(:enabled?, fn
+        :block_event_ingest, [for: "feature-flag-test.com"] -> true
+        _, _ -> false
+      end)
+
+      params = %{
+        domain: "feature-flag-test.com",
+        name: "pageview",
+        url: "https://feature-flag-test.com"
+      }
+
+      conn =
+        conn
+        |> put_req_header("user-agent", @user_agent)
+        |> post("/api/event", params)
+
+      assert response(conn, 202) == "ok"
+      refute get_event("feature-flag-test.com")
     end
 
     test "ignores when referrer is internal", %{conn: conn} do
@@ -611,7 +636,7 @@ defmodule PlausibleWeb.Api.ExternalControllerTest do
     end
 
     # Fake data is set up in config/test.exs
-    test "looks up the country from the ip address", %{conn: conn} do
+    test "looks up location data from the ip address", %{conn: conn} do
       params = %{
         name: "pageview",
         domain: "external-controller-test-20.com",
@@ -619,12 +644,15 @@ defmodule PlausibleWeb.Api.ExternalControllerTest do
       }
 
       conn
-      |> put_req_header("x-forwarded-for", "1.1.1.1")
+      |> put_req_header("x-forwarded-for", "2.2.2.2")
       |> post("/api/event", params)
 
       pageview = get_event("external-controller-test-20.com")
 
-      assert pageview.country_code == "US"
+      assert pageview.country_code == "FR"
+      assert pageview.subdivision1_code == "FR-IDF"
+      assert pageview.subdivision2_code == "FR-75"
+      assert pageview.city_geoname_id == 2_988_507
     end
 
     test "ignores unknown country code ZZ", %{conn: conn} do

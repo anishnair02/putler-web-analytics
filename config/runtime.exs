@@ -114,7 +114,7 @@ geolite2_country_db =
   get_var_from_path_or_env(
     config_dir,
     "GEOLITE2_COUNTRY_DB",
-    Application.app_dir(:plausible) <> "/priv/geodb/dbip-city-lite-2022-05.mmdb"
+    Application.app_dir(:plausible, "/priv/geodb/dbip-country.mmdb")
   )
 
 ip_geolocation_db = get_var_from_path_or_env(config_dir, "IP_GEOLOCATION_DB", geolite2_country_db)
@@ -218,7 +218,7 @@ config :fun_with_flags, :persistence,
   adapter: FunWithFlags.Store.Persistent.Ecto,
   repo: Plausible.Repo
 
-included_environments = if sentry_dsn, do: ["prod", "staging"], else: []
+included_environments = if sentry_dsn, do: ["prod", "staging", "dev"], else: []
 
 config :sentry,
   dsn: sentry_dsn,
@@ -227,12 +227,14 @@ config :sentry,
   release: app_version,
   tags: %{app_version: app_version},
   enable_source_code_context: true,
-  root_source_code_path: [File.cwd!()]
+  root_source_code_path: [File.cwd!()],
+  client: Plausible.Sentry.Client,
+  send_max_attempts: 1,
+  filter: Plausible.SentryFilter
 
 config :logger, Sentry.LoggerBackend,
   capture_log_messages: true,
-  level: :error,
-  excluded_domains: []
+  level: :error
 
 config :plausible, :paddle,
   vendor_auth_code: paddle_auth_code,
@@ -339,13 +341,15 @@ cloud_queues = [
 queues = if(is_selfhost, do: base_queues, else: base_queues ++ cloud_queues)
 cron_enabled = !disable_cron
 
+thirty_days_in_seconds = 60 * 60 * 24 * 30
+
 cond do
   config_env() == :prod ->
     config :plausible, Oban,
       repo: Plausible.Repo,
       plugins: [
         # Keep 30 days history
-        {Oban.Plugins.Pruner, max_age: :timer.hours(24 * 30)},
+        {Oban.Plugins.Pruner, max_age: thirty_days_in_seconds},
         {Oban.Plugins.Cron, crontab: if(cron_enabled, do: crontab, else: [])},
         # Rescue orphaned jobs after 2 hours
         {Oban.Plugins.Lifeline, rescue_after: :timer.minutes(120)},
@@ -364,6 +368,18 @@ end
 config :plausible, :hcaptcha,
   sitekey: hcaptcha_sitekey,
   secret: hcaptcha_secret
+
+config :plausible, Plausible.Finch,
+  default_pool_size: get_int_from_path_or_env(config_dir, "DEFAULT_FINCH_POOL_SIZE", 50),
+  default_pool_count: get_int_from_path_or_env(config_dir, "DEFAULT_FINCH_POOL_COUNT", 1),
+  sentry_pool_size: get_int_from_path_or_env(config_dir, "SENTRY_FINCH_POOL_SIZE", 50),
+  sentry_pool_count: get_int_from_path_or_env(config_dir, "SENTRY_FINCH_POOL_COUNT", 1)
+
+config :plausible, Plausible.Sentry.Client,
+  finch_request_opts: [
+    pool_timeout: get_int_from_path_or_env(config_dir, "SENTRY_FINCH_POOL_TIMEOUT", 5000),
+    receive_timeout: get_int_from_path_or_env(config_dir, "SENTRY_FINCH_RECEIVE_TIMEOUT", 15000)
+  ]
 
 config :ref_inspector,
   init: {Plausible.Release, :configure_ref_inspector}
@@ -444,3 +460,15 @@ end
 config :tzdata,
        :data_dir,
        get_var_from_path_or_env(config_dir, "STORAGE_DIR", Application.app_dir(:tzdata, "priv"))
+
+promex_disabled? =
+  config_dir
+  |> get_var_from_path_or_env("PROMEX_DISABLED", "true")
+  |> String.to_existing_atom()
+
+config :plausible, Plausible.PromEx,
+  disabled: promex_disabled?,
+  manual_metrics_start_delay: :no_delay,
+  drop_metrics_groups: [],
+  grafana: :disabled,
+  metrics_server: :disabled
